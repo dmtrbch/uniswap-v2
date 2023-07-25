@@ -27,10 +27,10 @@ contract UniswapV2PairTest is Test {
     }
 
     function assertReserves(
-        uint256 expectedReserve0,
-        uint256 expectedReserve1
+        uint112 expectedReserve0,
+        uint112 expectedReserve1
     ) internal {
-        (uint256 reserve0, uint256 reserve1, ) = pair.getReserves();
+        (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
         assertEq(reserve0, expectedReserve0, "unexpected reserve0");
         assertEq(reserve1, expectedReserve1, "unexpected reserve1");
     }
