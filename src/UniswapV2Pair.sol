@@ -11,6 +11,7 @@ interface IERC20 {
     function transfer(address to, uint256 amount) external;
 }
 
+error AlreadyInitialized();
 error BalanceOverflow();
 error InsufficientLiquidityMinted();
 error InsufficientLiquidityBurned();
@@ -46,10 +47,13 @@ contract UniswapV2Pair is ERC20, Math {
         address indexed to
     );
 
-    constructor(
-        address token0_,
-        address token1_
-    ) ERC20("LpTokenATokenB", "LpTKNATKNB", 18) {
+    constructor() ERC20("LpTokenATokenB", "LpTKNATKNB", 18) {}
+
+    function intialize(address token0_, address token1_) public {
+        // it this check is removed is will be HUGE security vulnerability
+        if (token0 != address(0) || token1 != address(0))
+            revert AlreadyInitialized();
+
         token0 = token0_;
         token1 = token1_;
     }
