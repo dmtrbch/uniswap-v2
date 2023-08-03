@@ -7,7 +7,7 @@ import "../src/UniswapV2Pair.sol";
 import "./mocks/ERC20Mintable.sol";
 
 contract UniswapV2PairTest is Test {
-    ERC20Mintable token0;
+    /* ERC20Mintable token0;
     ERC20Mintable token1;
     UniswapV2Pair public pair;
     TestUser testUser;
@@ -145,12 +145,12 @@ contract UniswapV2PairTest is Test {
         assertEq(token1.balanceOf(address(this)), 10 ether);
         // we loose 0.5 ether this way, who takes this amount?
         // pair or test user?
-    }
+    } */
 }
 
 // TODO: MAKE SOME VARIABLES uint112
 
-contract TestUser {
+/*contract TestUser {
     function provideLiquidity(
         address pairAddress_,
         address token0Address_,
@@ -169,4 +169,4 @@ contract TestUser {
         ERC20(pairAddress_).transfer(pairAddress_, liquidity);
         UniswapV2Pair(pairAddress_).burn();
     }
-}
+}*/

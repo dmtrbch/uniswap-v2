@@ -2,7 +2,7 @@
 pragma solidity 0.8.19;
 
 import "./UniswapV2Pair.sol";
-import "./interfaces/UniswapV2Pair.sol";
+import "./interfaces/IUniswapV2Pair.sol";
 
 contract UniswapV2Factory {
     error IdenticalAddresses();
@@ -42,7 +42,7 @@ contract UniswapV2Factory {
             pair := create2(0, add(bytecode, 0x20), mload(bytecode), salt)
         }
 
-        UniswapV2Pair(pair).initialize(token0, token1);
+        IUniswapV2Pair(pair).initialize(token0, token1);
 
         pairs[token0][token1] = pair;
         pairs[token1][token0] = pair;

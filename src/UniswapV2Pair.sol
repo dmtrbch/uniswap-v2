@@ -5,6 +5,8 @@ import "solmate/tokens/ERC20.sol";
 import "solmate/utils/ReentrancyGuard.sol";
 import "./libraries/Math.sol";
 import "./libraries/UQ112x112.sol";
+import "openzeppelin-contracts/contracts/interfaces/IERC3156FlashBorrower.sol";
+import "openzeppelin-contracts/contracts/interfaces/IERC3156FlashLender.sol";
 
 interface IERC20 {
     function balanceOf(address) external returns (uint256);
@@ -21,8 +23,11 @@ error InsufficientOutputAmount();
 error InsufficientLiquidity();
 error InvalidK();
 error TransferFailed();
+error InsufficientFlashLoanAmount();
+error InsufficientFlashLoanReturn();
+error CallbackFailed();
 
-contract UniswapV2Pair is ERC20, ReentrancyGuard, Math {
+contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
     using UQ112x112 for uint224;
 
     uint256 constant MINIMUM_LIQUIDITY = 1000;
@@ -223,6 +228,55 @@ contract UniswapV2Pair is ERC20, ReentrancyGuard, Math {
         );
         if (!success || (data.length != 0 && !abi.decode(data, (bool))))
             revert TransferFailed();
+    }
+
+    function maxFlashLoan(
+        address _token
+    ) external view override returns (uint256) {
+        if (_token == token0) return uint256(reserve0);
+        else if (_token == token1) return uint256(reserve1);
+        else return 0;
+    }
+
+    function flashFee(
+        address _token,
+        uint256 _amount
+    ) public view override returns (uint256) {
+        require(_token == token0 || _token == token1, "Invalid token");
+
+        uint256 fee = (_amount * 1000) / 997 - _amount + 1;
+        return fee;
+    }
+
+    function flashLoan(
+        IERC3156FlashBorrower _receiver,
+        address _token,
+        uint256 _amount,
+        bytes calldata _data
+    ) external override returns (bool) {
+        require(_token == token0 || _token == token1, "Invalid token");
+
+        uint256 fee = flashFee(_token, _amount);
+        uint256 balance = IERC20(_token).balanceOf(address(this));
+
+        // this might be unnecessary
+        if (balance < _amount) revert InsufficientFlashLoanAmount();
+
+        _safeTransfer(_token, address(_receiver), _amount);
+
+        if (
+            _receiver.onFlashLoan(msg.sender, _token, _amount, fee, _data) !=
+            keccak256("IERC3156FlashBorrower.onFlashLoan")
+        ) revert CallbackFailed();
+
+        uint256 newBalance = IERC20(_token).balanceOf(address(this));
+
+        if (newBalance < balance + fee) revert InsufficientFlashLoanReturn();
+
+        (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
+        _update(balance0, balance1, reserve0_, reserve1_);
+
+        return true;
     }
 }
 
