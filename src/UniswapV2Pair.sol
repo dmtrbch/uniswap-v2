@@ -2,6 +2,7 @@
 pragma solidity 0.8.19;
 
 import "solmate/tokens/ERC20.sol";
+import "solmate/utils/ReentrancyGuard.sol";
 import "./libraries/Math.sol";
 import "./libraries/UQ112x112.sol";
 
@@ -15,12 +16,13 @@ error AlreadyInitialized();
 error BalanceOverflow();
 error InsufficientLiquidityMinted();
 error InsufficientLiquidityBurned();
+error InsufficientInputAmount();
 error InsufficientOutputAmount();
 error InsufficientLiquidity();
 error InvalidK();
 error TransferFailed();
 
-contract UniswapV2Pair is ERC20, Math {
+contract UniswapV2Pair is ERC20, ReentrancyGuard, Math {
     using UQ112x112 for uint224;
 
     uint256 constant MINIMUM_LIQUIDITY = 1000;
@@ -63,15 +65,13 @@ contract UniswapV2Pair is ERC20, Math {
         token1 = token1_;
     }
 
-    function mint() public {
+    function mint(address to) public returns (uint256 liquidity) {
         (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
 
         uint256 balance0 = IERC20(token0).balanceOf(address(this));
         uint256 balance1 = IERC20(token1).balanceOf(address(this));
         uint256 amount0 = balance0 - reserve0_;
         uint256 amount1 = balance1 - reserve1_;
-
-        uint256 liquidity;
 
         if (totalSupply == 0) {
             // the initial liquidity reserve ratio doesn’t affect the value of a pool share
@@ -91,17 +91,17 @@ contract UniswapV2Pair is ERC20, Math {
 
         if (liquidity <= 0) revert InsufficientLiquidityMinted();
 
-        _mint(msg.sender, liquidity);
+        _mint(to, liquidity);
 
         _update(balance0, balance1, reserve0_, reserve1_);
 
-        emit Mint(msg.sender, amount0, amount1);
+        emit Mint(to, amount0, amount1);
     }
 
     function burn(
         address to
     ) public returns (uint256 amount0, uint256 amount1) {
-        // why don't we use the reserves instead?
+        // why don't we use the reserves instead? is it more gas efficient?
         uint256 balance0 = IERC20(token0).balanceOf(address(this));
         uint256 balance1 = IERC20(token1).balanceOf(address(this));
         uint256 liquidity = balanceOf[address(this)];
@@ -110,7 +110,7 @@ contract UniswapV2Pair is ERC20, Math {
         // what does it mean: using balances ensures pro-rata distribution?
         /**
             is it possible that someone has transferred amounts of tokenA and/or
-            tokenB and it would be more fair to taken the balances into account
+            tokenB and it would be more accurate to take the balances into account
             instead of the reserves??
          */
         amount0 = (liquidity * balance0) / totalSupply;
@@ -132,7 +132,11 @@ contract UniswapV2Pair is ERC20, Math {
         emit Burn(msg.sender, amount0, amount1, to);
     }
 
-    function swap(uint256 amount0Out, uint256 amount1Out, address to) public {
+    function swap(
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address to
+    ) public nonReentrant {
         if (amount0Out == 0 && amount1Out == 0)
             revert InsufficientOutputAmount();
 
@@ -141,16 +145,31 @@ contract UniswapV2Pair is ERC20, Math {
         if (amount0Out > reserve0_ || amount1Out > reserve1_)
             revert InsufficientLiquidity();
 
+        if (amount0Out > 0) _safeTransfer(token0, to, amount0Out);
+        if (amount1Out > 0) _safeTransfer(token1, to, amount1Out);
+
         uint256 balance0 = IERC20(token0).balanceOf(address(this)) - amount0Out;
         uint256 balance1 = IERC20(token1).balanceOf(address(this)) - amount1Out;
 
-        if (balance0 * balance1 < uint256(reserve0_) * uint256(reserve1_))
-            revert InvalidK();
+        uint256 amount0In = balance0 > reserve0 - amount0Out
+            ? balance0 - (reserve0 - amount0Out)
+            : 0;
+
+        uint256 amount1In = balance1 > reserve1 - amount1Out
+            ? balance1 - (reserve1 - amount1Out)
+            : 0;
+
+        if (amount0In == 0 && amount1In == 0) revert InsufficientInputAmount();
+
+        uint256 balance0Adjusted = (balance0 * 1000) - (amount0In * 3);
+        uint256 balance1Adjusted = (balance1 * 1000) - (amount1In * 3);
+
+        if (
+            balance0Adjusted * balance1Adjusted <
+            uint256(reserve0_) * uint256(reserve1_) * (1000 ** 2)
+        ) revert InvalidK();
 
         _update(balance0, balance1, reserve0_, reserve1_);
-
-        if (amount0Out > 0) _safeTransfer(token0, to, amount0Out);
-        if (amount1Out > 0) _safeTransfer(token1, to, amount1Out);
 
         emit Swap(msg.sender, amount0Out, amount1Out, to);
     }
