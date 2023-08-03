@@ -70,7 +70,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         token1 = token1_;
     }
 
-    function mint(address to) public returns (uint256 liquidity) {
+    function mint(address to) public nonReentrant returns (uint256 liquidity) {
         (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
 
         uint256 balance0 = IERC20(token0).balanceOf(address(this));
@@ -105,7 +105,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
 
     function burn(
         address to
-    ) public returns (uint256 amount0, uint256 amount1) {
+    ) public nonReentrant returns (uint256 amount0, uint256 amount1) {
         // why don't we use the reserves instead? is it more gas efficient?
         uint256 balance0 = IERC20(token0).balanceOf(address(this));
         uint256 balance1 = IERC20(token1).balanceOf(address(this));
@@ -253,7 +253,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         address _token,
         uint256 _amount,
         bytes calldata _data
-    ) external override returns (bool) {
+    ) external override nonReentrant returns (bool) {
         require(_token == token0 || _token == token1, "Invalid token");
 
         uint256 fee = flashFee(_token, _amount);
@@ -273,8 +273,8 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
 
         if (newBalance < balance + fee) revert InsufficientFlashLoanReturn();
 
-        (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
-        _update(balance0, balance1, reserve0_, reserve1_);
+        // (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
+        // _update(balance0, balance1, reserve0_, reserve1_);
 
         return true;
     }
