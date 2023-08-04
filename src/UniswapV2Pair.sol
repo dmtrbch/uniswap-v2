@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity 0.8.19;
 
-import "solmate/tokens/ERC20.sol";
+import {SafeTransferLib, ERC20} from "solmate/mixins/ERC4626.sol";
 import "solmate/utils/ReentrancyGuard.sol";
 import "./libraries/Math.sol";
 import "./libraries/UQ112x112.sol";
-import "openzeppelin-contracts/contracts/interfaces/IERC3156FlashBorrower.sol";
-import "openzeppelin-contracts/contracts/interfaces/IERC3156FlashLender.sol";
-
-interface IERC20 {
-    function balanceOf(address) external returns (uint256);
-
-    function transfer(address to, uint256 amount) external;
-}
+import {IERC3156FlashBorrower, IERC3156FlashLender} from "openzeppelin-contracts/contracts/interfaces/IERC3156FlashLender.sol";
 
 error AlreadyInitialized();
 error BalanceOverflow();
@@ -22,13 +15,12 @@ error InsufficientInputAmount();
 error InsufficientOutputAmount();
 error InsufficientLiquidity();
 error InvalidK();
-error TransferFailed();
 error InsufficientFlashLoanAmount();
-error InsufficientFlashLoanReturn();
 error CallbackFailed();
 
 contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
     using UQ112x112 for uint224;
+    using SafeTransferLib for ERC20;
 
     uint256 constant MINIMUM_LIQUIDITY = 1000;
 
@@ -73,8 +65,8 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
     function mint(address to) public nonReentrant returns (uint256 liquidity) {
         (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
 
-        uint256 balance0 = IERC20(token0).balanceOf(address(this));
-        uint256 balance1 = IERC20(token1).balanceOf(address(this));
+        uint256 balance0 = ERC20(token0).balanceOf(address(this));
+        uint256 balance1 = ERC20(token1).balanceOf(address(this));
         uint256 amount0 = balance0 - reserve0_;
         uint256 amount1 = balance1 - reserve1_;
 
@@ -107,8 +99,8 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         address to
     ) public nonReentrant returns (uint256 amount0, uint256 amount1) {
         // why don't we use the reserves instead? is it more gas efficient?
-        uint256 balance0 = IERC20(token0).balanceOf(address(this));
-        uint256 balance1 = IERC20(token1).balanceOf(address(this));
+        uint256 balance0 = ERC20(token0).balanceOf(address(this));
+        uint256 balance1 = ERC20(token1).balanceOf(address(this));
         uint256 liquidity = balanceOf[address(this)];
 
         // why don't we use the reserves instead?
@@ -125,11 +117,11 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
 
         _burn(address(this), liquidity);
 
-        _safeTransfer(token0, to, amount0);
-        _safeTransfer(token1, to, amount1);
+        ERC20(token0).safeTransfer(to, amount0);
+        ERC20(token1).safeTransfer(to, amount1);
 
-        balance0 = IERC20(token0).balanceOf(address(this));
-        balance1 = IERC20(token1).balanceOf(address(this));
+        balance0 = ERC20(token0).balanceOf(address(this));
+        balance1 = ERC20(token1).balanceOf(address(this));
 
         (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
         _update(balance0, balance1, reserve0_, reserve1_);
@@ -150,11 +142,11 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         if (amount0Out > reserve0_ || amount1Out > reserve1_)
             revert InsufficientLiquidity();
 
-        if (amount0Out > 0) _safeTransfer(token0, to, amount0Out);
-        if (amount1Out > 0) _safeTransfer(token1, to, amount1Out);
+        if (amount0Out > 0) ERC20(token0).safeTransfer(to, amount0Out);
+        if (amount1Out > 0) ERC20(token1).safeTransfer(to, amount1Out);
 
-        uint256 balance0 = IERC20(token0).balanceOf(address(this)) - amount0Out;
-        uint256 balance1 = IERC20(token1).balanceOf(address(this)) - amount1Out;
+        uint256 balance0 = ERC20(token0).balanceOf(address(this)) - amount0Out;
+        uint256 balance1 = ERC20(token1).balanceOf(address(this)) - amount1Out;
 
         uint256 amount0In = balance0 > reserve0 - amount0Out
             ? balance0 - (reserve0 - amount0Out)
@@ -182,8 +174,8 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
     function sync() public {
         (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
         _update(
-            IERC20(token0).balanceOf(address(this)),
-            IERC20(token1).balanceOf(address(this)),
+            ERC20(token0).balanceOf(address(this)),
+            ERC20(token1).balanceOf(address(this)),
             reserve0_,
             reserve1_
         );
@@ -222,17 +214,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         emit Sync(reserve0, reserve1);
     }
 
-    function _safeTransfer(address token, address to, uint256 value) private {
-        (bool success, bytes memory data) = token.call(
-            abi.encodeWithSignature("transfer(address,uint256)", to, value)
-        );
-        if (!success || (data.length != 0 && !abi.decode(data, (bool))))
-            revert TransferFailed();
-    }
-
-    function maxFlashLoan(
-        address _token
-    ) external view override returns (uint256) {
+    function maxFlashLoan(address _token) public view returns (uint256) {
         if (_token == token0) return uint256(reserve0);
         else if (_token == token1) return uint256(reserve1);
         else return 0;
@@ -241,7 +223,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
     function flashFee(
         address _token,
         uint256 _amount
-    ) public view override returns (uint256) {
+    ) public view returns (uint256) {
         require(_token == token0 || _token == token1, "Invalid token");
 
         uint256 fee = (_amount * 1000) / 997 - _amount + 1;
@@ -253,28 +235,35 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         address _token,
         uint256 _amount,
         bytes calldata _data
-    ) external override nonReentrant returns (bool) {
+    ) external returns (bool) {
         require(_token == token0 || _token == token1, "Invalid token");
 
         uint256 fee = flashFee(_token, _amount);
-        uint256 balance = IERC20(_token).balanceOf(address(this));
+        uint256 balance = ERC20(_token).balanceOf(address(this));
 
-        // this might be unnecessary
         if (balance < _amount) revert InsufficientFlashLoanAmount();
 
-        _safeTransfer(_token, address(_receiver), _amount);
+        ERC20(_token).safeTransfer(address(_receiver), _amount);
+
+        (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
+        if (_token == token0) {
+            uint256 balance1 = ERC20(token1).balanceOf(address(this));
+            _update(balance + fee, balance1, reserve0_, reserve1_);
+        } else {
+            uint256 balance0 = ERC20(token0).balanceOf(address(this));
+            _update(balance0, balance + fee, reserve0_, reserve1_);
+        }
 
         if (
             _receiver.onFlashLoan(msg.sender, _token, _amount, fee, _data) !=
             keccak256("IERC3156FlashBorrower.onFlashLoan")
         ) revert CallbackFailed();
 
-        uint256 newBalance = IERC20(_token).balanceOf(address(this));
-
-        if (newBalance < balance + fee) revert InsufficientFlashLoanReturn();
-
-        // (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
-        // _update(balance0, balance1, reserve0_, reserve1_);
+        ERC20(_token).safeTransferFrom(
+            address(_receiver),
+            address(this),
+            _amount + fee
+        );
 
         return true;
     }
