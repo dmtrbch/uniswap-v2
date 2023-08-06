@@ -2,9 +2,10 @@
 pragma solidity 0.8.19;
 
 import {SafeTransferLib, ERC20} from "solmate/mixins/ERC4626.sol";
+import "solmate/utils/FixedPointMathLib.sol";
 import "solmate/utils/ReentrancyGuard.sol";
-import "./libraries/Math.sol";
-import "./libraries/UQ112x112.sol";
+// import "./libraries/Math.sol";
+// import "./libraries/UQ112x112.sol";
 import {IERC3156FlashBorrower, IERC3156FlashLender} from "openzeppelin-contracts/contracts/interfaces/IERC3156FlashLender.sol";
 
 error AlreadyInitialized();
@@ -18,9 +19,10 @@ error InvalidK();
 error InsufficientFlashLoanAmount();
 error CallbackFailed();
 
-contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
-    using UQ112x112 for uint224;
+contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard {
+    // using UQ112x112 for uint224;
     using SafeTransferLib for ERC20;
+    using FixedPointMathLib for uint128;
 
     uint256 constant MINIMUM_LIQUIDITY = 1000;
 
@@ -29,12 +31,18 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
     // we need to track pool reserves on our side
     // to avoid price manipulations that can happen
     // if only relying on balanceOf
-    uint112 private reserve0;
-    uint112 private reserve1;
-    uint32 private blockTimestampLast;
+
+    // uint112 private reserve0;
+    // uint112 private reserve1;
+    // uint32 private blockTimestampLast;
+
+    uint128 private reserve0;
+    uint128 private reserve1;
 
     uint256 public price0CumulativeLast;
     uint256 public price1CumulativeLast;
+
+    uint32 public blockTimestampLast;
 
     event Burn(
         address indexed sender,
@@ -53,7 +61,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
 
     constructor() ERC20("LpTokenATokenB", "LpTKNATKNB", 18) {}
 
-    function intialize(address token0_, address token1_) public {
+    function initialize(address token0_, address token1_) public {
         // it this check is removed is will be HUGE security vulnerability
         if (token0 != address(0) || token1 != address(0))
             revert AlreadyInitialized();
@@ -63,7 +71,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
     }
 
     function mint(address to) public nonReentrant returns (uint256 liquidity) {
-        (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
+        (uint128 reserve0_, uint128 reserve1_) = getReserves();
 
         uint256 balance0 = ERC20(token0).balanceOf(address(this));
         uint256 balance1 = ERC20(token1).balanceOf(address(this));
@@ -74,16 +82,20 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
             // the initial liquidity reserve ratio doesn’t affect the value of a pool share
             // MINIMUM_LIQUIDITY protects from someone making one pool token share
             // (1e-18, 1 wei) too expensive, which would turn away small liquidity providers.
-            liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
+            liquidity =
+                FixedPointMathLib.sqrt(amount0 * amount1) -
+                MINIMUM_LIQUIDITY;
+            // liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
             _mint(address(0), MINIMUM_LIQUIDITY);
         } else {
             // choose the smaller deposited amount of tokens
             // punish for depositing of unbalanced liquidity
             // (liquidity providers would get fewer LP-tokens)
-            liquidity = Math.min(
-                (amount0 * totalSupply) / reserve0_,
+
+            liquidity = (amount0 * totalSupply) / reserve0_ <
                 (amount1 * totalSupply) / reserve1_
-            );
+                ? (amount0 * totalSupply) / reserve0_
+                : (amount1 * totalSupply) / reserve1_;
         }
 
         if (liquidity <= 0) revert InsufficientLiquidityMinted();
@@ -123,7 +135,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         balance0 = ERC20(token0).balanceOf(address(this));
         balance1 = ERC20(token1).balanceOf(address(this));
 
-        (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
+        (uint128 reserve0_, uint128 reserve1_) = getReserves();
         _update(balance0, balance1, reserve0_, reserve1_);
 
         emit Burn(msg.sender, amount0, amount1, to);
@@ -137,7 +149,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         if (amount0Out == 0 && amount1Out == 0)
             revert InsufficientOutputAmount();
 
-        (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
+        (uint128 reserve0_, uint128 reserve1_) = getReserves();
 
         if (amount0Out > reserve0_ || amount1Out > reserve1_)
             revert InsufficientLiquidity();
@@ -161,6 +173,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         uint256 balance0Adjusted = (balance0 * 1000) - (amount0In * 3);
         uint256 balance1Adjusted = (balance1 * 1000) - (amount1In * 3);
 
+        // uniswap v2 uses safe math here
         if (
             balance0Adjusted * balance1Adjusted <
             uint256(reserve0_) * uint256(reserve1_) * (1000 ** 2)
@@ -172,7 +185,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
     }
 
     function sync() public {
-        (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
+        (uint128 reserve0_, uint128 reserve1_) = getReserves();
         _update(
             ERC20(token0).balanceOf(address(this)),
             ERC20(token1).balanceOf(address(this)),
@@ -181,34 +194,53 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
         );
     }
 
-    function getReserves() public view returns (uint112, uint112, uint32) {
-        return (reserve0, reserve1, blockTimestampLast);
+    function getReserves() public view returns (uint128, uint128) {
+        return (reserve0, reserve1);
     }
 
     function _update(
         uint256 balance0,
         uint256 balance1,
-        uint112 reserve0_,
-        uint112 reserve1_
+        uint128 reserve0_,
+        uint128 reserve1_
     ) private {
-        if (balance0 > type(uint112).max || balance1 > type(uint112).max)
+        // if (balance0 > type(uint112).max || balance1 > type(uint112).max)
+        //    revert BalanceOverflow();
+
+        // if (balance0 > type(uint256).max / 1e18 || balance1 > type(uint256).max / 1e18)
+        //    revert BalanceOverflow();
+
+        if (balance0 > type(uint128).max || balance1 > type(uint128).max)
             revert BalanceOverflow();
 
         unchecked {
             uint32 timeElapsed = uint32(block.timestamp) - blockTimestampLast;
 
-            if (timeElapsed > 0 && reserve0_ > 0 && reserve1_ > 0) {
+            /*if (timeElapsed > 0 && reserve0_ > 0 && reserve1_ > 0) {
                 price0CumulativeLast +=
                     uint256(UQ112x112.encode(reserve1_).uqdiv(reserve0_)) *
                     timeElapsed;
                 price1CumulativeLast +=
                     uint256(UQ112x112.encode(reserve0_).uqdiv(reserve1_)) *
                     timeElapsed;
+            }*/
+
+            if (timeElapsed > 0 && reserve0_ > 0 && reserve1_ > 0) {
+                // * never overflows, and + overflow is desired?? why
+                price0CumulativeLast +=
+                    reserve1_.divWadDown(reserve0_) *
+                    timeElapsed;
+
+                price1CumulativeLast +=
+                    reserve0_.divWadDown(reserve1_) *
+                    timeElapsed;
             }
         }
 
-        reserve0 = uint112(balance0);
-        reserve1 = uint112(balance1);
+        // reserve0 = uint112(balance0);
+        // reserve1 = uint112(balance1);
+        reserve0 = uint128(balance0);
+        reserve1 = uint128(balance1);
         blockTimestampLast = uint32(block.timestamp);
 
         emit Sync(reserve0, reserve1);
@@ -245,7 +277,7 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard, Math {
 
         ERC20(_token).safeTransfer(address(_receiver), _amount);
 
-        (uint112 reserve0_, uint112 reserve1_, ) = getReserves();
+        (uint128 reserve0_, uint128 reserve1_) = getReserves();
         if (_token == token0) {
             uint256 balance1 = ERC20(token1).balanceOf(address(this));
             _update(balance + fee, balance1, reserve0_, reserve1_);
