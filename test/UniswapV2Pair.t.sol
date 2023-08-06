@@ -265,7 +265,7 @@ contract UniswapV2PairTest is Test {
         token0.transfer(address(pair), 0.1 ether);
         pair.swap(0, amountOut, address(this));
 
-        /*  assertEq(
+        assertEq(
             token0.balanceOf(address(this)),
             10 ether - 1 ether - 0.1 ether,
             "unexpected token0 balance"
@@ -274,8 +274,8 @@ contract UniswapV2PairTest is Test {
             token1.balanceOf(address(this)),
             10 ether - 2 ether + amountOut,
             "unexpected token1 balance"
-        );*/
-        // assertReserves(1 ether + 0.1 ether, uint128(2 ether - amountOut));
+        );
+        assertReserves(1 ether + 0.1 ether, uint128(2 ether - amountOut));
     }
 }
 

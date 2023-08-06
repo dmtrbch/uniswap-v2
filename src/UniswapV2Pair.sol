@@ -157,8 +157,12 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard {
         if (amount0Out > 0) ERC20(token0).safeTransfer(to, amount0Out);
         if (amount1Out > 0) ERC20(token1).safeTransfer(to, amount1Out);
 
-        uint256 balance0 = ERC20(token0).balanceOf(address(this)) - amount0Out;
-        uint256 balance1 = ERC20(token1).balanceOf(address(this)) - amount1Out;
+        //mistake
+        //uint256 balance0 = ERC20(token0).balanceOf(address(this)) - amount0Out;
+        //uint256 balance1 = ERC20(token1).balanceOf(address(this)) - amount1Out;
+
+        uint256 balance0 = ERC20(token0).balanceOf(address(this));
+        uint256 balance1 = ERC20(token1).balanceOf(address(this));
 
         uint256 amount0In = balance0 > reserve0 - amount0Out
             ? balance0 - (reserve0 - amount0Out)
