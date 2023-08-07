@@ -174,6 +174,12 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard {
 
         if (amount0In == 0 && amount1In == 0) revert InsufficientInputAmount();
 
+        // current balances minus swap fees
+        // we have to multiply balances by 1000 and amounts by 3 to “emulate”
+        // multiplication of the input amounts by 0.003 (0.3%).
+        // why do we need to do this, when we are substracting swap fees in getAmountOut
+        // we must do this to check if the 0.3% calculated with getAmount out
+        // has indeed been applied
         uint256 balance0Adjusted = (balance0 * 1000) - (amount0In * 3);
         uint256 balance1Adjusted = (balance1 * 1000) - (amount1In * 3);
 

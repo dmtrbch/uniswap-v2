@@ -8,6 +8,27 @@ import "../src/UniswapV2Pair.sol";
 import "../src/UniswapV2Factory.sol";
 import "./mocks/ERC20Mintable.sol";
 
+contract TestUser {
+    function provideLiquidity(
+        address pairAddress_,
+        address token0Address_,
+        address token1Address_,
+        uint256 amount0_,
+        uint256 amount1_
+    ) public {
+        ERC20(token0Address_).transfer(pairAddress_, amount0_);
+        ERC20(token1Address_).transfer(pairAddress_, amount1_);
+
+        UniswapV2Pair(pairAddress_).mint(address(this));
+    }
+
+    function removeLiquidity(address pairAddress_) public {
+        uint256 liquidity = ERC20(pairAddress_).balanceOf(address(this));
+        ERC20(pairAddress_).transfer(pairAddress_, liquidity);
+        UniswapV2Pair(pairAddress_).burn(address(this));
+    }
+}
+
 contract UniswapV2PairTest is Test {
     ERC20Mintable token0;
     ERC20Mintable token1;
@@ -277,25 +298,123 @@ contract UniswapV2PairTest is Test {
         );
         assertReserves(1 ether + 0.1 ether, uint128(2 ether - amountOut));
     }
-}
 
-contract TestUser {
-    function provideLiquidity(
-        address pairAddress_,
-        address token0Address_,
-        address token1Address_,
-        uint256 amount0_,
-        uint256 amount1_
-    ) public {
-        ERC20(token0Address_).transfer(pairAddress_, amount0_);
-        ERC20(token1Address_).transfer(pairAddress_, amount1_);
+    function testSwapBasicScenarioReverseDirection() public {
+        token0.transfer(address(pair), 1 ether);
+        token1.transfer(address(pair), 2 ether);
+        pair.mint(address(this));
 
-        UniswapV2Pair(pairAddress_).mint(address(this));
+        token1.transfer(address(pair), 0.2 ether);
+        pair.swap(0.09 ether, 0, address(this));
+
+        assertEq(
+            token0.balanceOf(address(this)),
+            10 ether - 1 ether + 0.09 ether,
+            "unexpected token0 balance"
+        );
+        assertEq(
+            token1.balanceOf(address(this)),
+            10 ether - 2 ether - 0.2 ether,
+            "unexpected token1 balance"
+        );
+        assertReserves(1 ether - 0.09 ether, 2 ether + 0.2 ether);
     }
 
-    function removeLiquidity(address pairAddress_) public {
-        uint256 liquidity = ERC20(pairAddress_).balanceOf(address(this));
-        ERC20(pairAddress_).transfer(pairAddress_, liquidity);
-        UniswapV2Pair(pairAddress_).burn(address(this));
+    function testSwapBidirectional() public {
+        token0.transfer(address(pair), 1 ether);
+        token1.transfer(address(pair), 2 ether);
+        pair.mint(address(this));
+
+        token0.transfer(address(pair), 0.1 ether);
+        token1.transfer(address(pair), 0.2 ether);
+        pair.swap(0.09 ether, 0.18 ether, address(this));
+
+        assertEq(
+            token0.balanceOf(address(this)),
+            10 ether - 1 ether - 0.01 ether,
+            "unexpected token0 balance"
+        );
+        assertEq(
+            token1.balanceOf(address(this)),
+            10 ether - 2 ether - 0.02 ether,
+            "unexpected token1 balance"
+        );
+        assertReserves(1 ether + 0.01 ether, 2 ether + 0.02 ether);
+    }
+
+    function testSwapZeroOut() public {
+        token0.transfer(address(pair), 1 ether);
+        token1.transfer(address(pair), 2 ether);
+        pair.mint(address(this));
+
+        vm.expectRevert(encodeError("InsufficientOutputAmount()"));
+        pair.swap(0, 0, address(this));
+    }
+
+    function testSwapInsufficientLiquidity() public {
+        token0.transfer(address(pair), 1 ether);
+        token1.transfer(address(pair), 2 ether);
+        pair.mint(address(this));
+
+        vm.expectRevert(encodeError("InsufficientLiquidity()"));
+        pair.swap(0, 2.1 ether, address(this));
+
+        vm.expectRevert(encodeError("InsufficientLiquidity()"));
+        pair.swap(1.1 ether, 0, address(this));
+    }
+
+    function testSwapUnderpriced() public {
+        token0.transfer(address(pair), 1 ether);
+        token1.transfer(address(pair), 2 ether);
+        pair.mint(address(this));
+
+        token0.transfer(address(pair), 0.1 ether);
+        pair.swap(0, 0.09 ether, address(this));
+
+        assertEq(
+            token0.balanceOf(address(this)),
+            10 ether - 1 ether - 0.1 ether,
+            "unexpected token0 balance"
+        );
+        assertEq(
+            token1.balanceOf(address(this)),
+            10 ether - 2 ether + 0.09 ether,
+            "unexpected token1 balance"
+        );
+        assertReserves(1 ether + 0.1 ether, 2 ether - 0.09 ether);
+    }
+
+    function testSwapOverpriced() public {
+        token0.transfer(address(pair), 1 ether);
+        token1.transfer(address(pair), 2 ether);
+        pair.mint(address(this));
+
+        token0.transfer(address(pair), 0.1 ether);
+
+        vm.expectRevert(encodeError("InvalidK()"));
+        pair.swap(0, 0.36 ether, address(this));
+
+        assertEq(
+            token0.balanceOf(address(this)),
+            10 ether - 1 ether - 0.1 ether,
+            "unexpected token0 balance"
+        );
+        assertEq(
+            token1.balanceOf(address(this)),
+            10 ether - 2 ether,
+            "unexpected token1 balance"
+        );
+        assertReserves(1 ether, 2 ether);
+    }
+
+    function testSwapUnpaidFee() public {
+        token0.transfer(address(pair), 1 ether);
+        token1.transfer(address(pair), 2 ether);
+        pair.mint(address(this));
+
+        token0.transfer(address(pair), 0.1 ether);
+
+        vm.expectRevert(encodeError("InvalidK()"));
+        pair.swap(0, 0.181322178776029827 ether, address(this));
     }
 }
