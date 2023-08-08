@@ -4,6 +4,7 @@ pragma solidity ^0.8.13;
 import "forge-std/Test.sol";
 import "forge-std/console2.sol";
 import "solmate/utils/FixedPointMathLib.sol";
+import {IERC3156FlashBorrower} from "openzeppelin-contracts/contracts/interfaces/IERC3156FlashLender.sol";
 import "../src/UniswapV2Pair.sol";
 import "../src/UniswapV2Factory.sol";
 import "./mocks/ERC20Mintable.sol";
@@ -26,6 +27,56 @@ contract TestUser {
         uint256 liquidity = ERC20(pairAddress_).balanceOf(address(this));
         ERC20(pairAddress_).transfer(pairAddress_, liquidity);
         UniswapV2Pair(pairAddress_).burn(address(this));
+    }
+}
+
+contract Flashloaner is IERC3156FlashBorrower {
+    error UnexpectedFlashLoan();
+
+    uint256 expectedLoanAmount;
+    address pairAddress;
+
+    function flashloan(
+        address _pairAddress,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address tokenAddress
+    ) public {
+        pairAddress = _pairAddress;
+
+        if (amount0Out > 0) {
+            expectedLoanAmount = amount0Out;
+        }
+        if (amount1Out > 0) {
+            expectedLoanAmount = amount1Out;
+        }
+
+        UniswapV2Pair(_pairAddress).flashLoan(
+            this,
+            tokenAddress,
+            expectedLoanAmount,
+            bytes("")
+        );
+    }
+
+    function onFlashLoan(
+        address initiator,
+        address token,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata
+    ) external returns (bytes32) {
+        if (
+            initiator != address(this) ||
+            msg.sender != pairAddress ||
+            (token != UniswapV2Pair(pairAddress).token0() &&
+                token != UniswapV2Pair(pairAddress).token1()) ||
+            fee == 0
+        ) revert UnexpectedFlashLoan();
+
+        ERC20(token).approve(pairAddress, amount + fee);
+
+        return keccak256("IERC3156FlashBorrower.onFlashLoan");
     }
 }
 
@@ -416,5 +467,101 @@ contract UniswapV2PairTest is Test {
 
         vm.expectRevert(encodeError("InvalidK()"));
         pair.swap(0, 0.181322178776029827 ether, address(this));
+    }
+
+    // why. come back to this again
+    function testCumulativePrices() public {
+        vm.warp(0);
+        token0.transfer(address(pair), 1 ether);
+        token1.transfer(address(pair), 1 ether);
+        pair.mint(address(this));
+
+        (
+            uint256 initialPrice0,
+            uint256 initialPrice1
+        ) = calculateCurrentPrice();
+
+        console.logUint(initialPrice0);
+        console.logUint(initialPrice1);
+
+        // 0 seconds passed.
+        pair.sync();
+        assertCumulativePrices(0, 0);
+
+        // 1 second passed.
+        vm.warp(1);
+        pair.sync();
+        assertBlockTimestampLast(1);
+        assertCumulativePrices(initialPrice0, initialPrice1);
+
+        // 2 seconds passed.
+        vm.warp(2);
+        pair.sync();
+        assertBlockTimestampLast(2);
+        assertCumulativePrices(initialPrice0 * 2, initialPrice1 * 2);
+
+        // 3 seconds passed.
+        vm.warp(3);
+        pair.sync();
+        assertBlockTimestampLast(3);
+        assertCumulativePrices(initialPrice0 * 3, initialPrice1 * 3);
+
+        // Price changed.
+        token0.transfer(address(pair), 2 ether);
+        token1.transfer(address(pair), 1 ether);
+        pair.mint(address(this));
+
+        (uint256 newPrice0, uint256 newPrice1) = calculateCurrentPrice();
+
+        // // 0 seconds since last reserves update.
+        assertCumulativePrices(initialPrice0 * 3, initialPrice1 * 3);
+
+        // // 1 second passed.
+        vm.warp(4);
+        pair.sync();
+        assertBlockTimestampLast(4);
+        assertCumulativePrices(
+            initialPrice0 * 3 + newPrice0,
+            initialPrice1 * 3 + newPrice1
+        );
+
+        // 2 seconds passed.
+        vm.warp(5);
+        pair.sync();
+        assertBlockTimestampLast(5);
+        assertCumulativePrices(
+            initialPrice0 * 3 + newPrice0 * 2,
+            initialPrice1 * 3 + newPrice1 * 2
+        );
+
+        // 3 seconds passed.
+        vm.warp(6);
+        pair.sync();
+        assertBlockTimestampLast(6);
+        assertCumulativePrices(
+            initialPrice0 * 3 + newPrice0 * 3,
+            initialPrice1 * 3 + newPrice1 * 3
+        );
+    }
+
+    function testFlashloan() public {
+        token0.transfer(address(pair), 1 ether);
+        token1.transfer(address(pair), 2 ether);
+        pair.mint(address(this));
+
+        uint256 flashloanAmount = 0.1 ether;
+        uint256 flashloanFee = (flashloanAmount * 1000) /
+            997 -
+            flashloanAmount +
+            1;
+
+        Flashloaner fl = new Flashloaner();
+
+        token1.transfer(address(fl), flashloanFee);
+
+        fl.flashloan(address(pair), 0, flashloanAmount, address(token1));
+
+        assertEq(token1.balanceOf(address(fl)), 0);
+        assertEq(token1.balanceOf(address(pair)), 2 ether + flashloanFee);
     }
 }

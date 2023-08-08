@@ -310,5 +310,3 @@ contract UniswapV2Pair is IERC3156FlashLender, ERC20, ReentrancyGuard {
         return true;
     }
 }
-
-// TODO: Output amount calculation
